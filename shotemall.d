@@ -14,8 +14,8 @@ enum Tile
 {
    Invalid = '_',
 
-   Empty = ' ',
-   Wall = '#',
+   Empty      = ' ',
+   Wall	      = '#',
 
    PlayerBody  = '0',
    PlayerBody1 = '1',
@@ -62,7 +62,18 @@ enum Tile
 
 struct Position
 {
-  int x, y;
+  int x = int.min;
+  int y = int.min;
+
+  Position opBinary(string op : "+")(Position p2)
+  {
+     return Position(this.x + p2.x, this.y + p2.y);
+  }
+
+  Position opBinary(string op : "-")(Position p2)
+  {
+     return Position(this.x - p2.x, this.y - p2.y);
+  }
 }
 
 enum Action
@@ -123,11 +134,39 @@ enum y_dim = 24;
 
 struct GameState
 {
-    int player_count; /// 0 means game has not started yet
+    int player_count = 0; /// 0 means game has not started yet
     int[] player_points; /// invaraint: length == player_count
     Direction[] bulletDirections; /// invariant: length == player_count
 
     Tile[y_dim][x_dim] tiles;
+
+	auto tileForeach()
+	{
+		struct ForeachInner
+		{
+			GameState* game_state;
+
+			this(GameState* game_state)
+			{
+				this.game_state = game_state;
+			}
+
+			int opApply(int delegate(int x, int y, ref Tile tile) dg)
+			{
+                int rv;
+				foreach(x; 0 .. x_dim)
+				{
+					foreach(y; 0 .. y_dim)
+					{
+						rv = dg(x, y, game_state.tiles[x][y]);
+					}
+				}
+                return rv;
+			}
+		}
+
+		return ForeachInner(&this);
+	}
 }
 
 pragma(msg, "x_dim: ", GameState.init.tiles.length, " y_dim: ", GameState.init.tiles[0].length);
@@ -135,7 +174,7 @@ pragma(msg, "x_dim: ", GameState.init.tiles.length, " y_dim: ", GameState.init.t
 
 /// returns the player number
 /// 0 if not a home position
-int isHome(int x, int y)
+int isPlayerHome(int x, int y)
 {
     int result = 0; 
 
@@ -160,13 +199,17 @@ Action[] PossibleActions(GameState* game_state, int player)
 void AddDefaultTiles(GameState* game_state)
 {
     int i;
+    assert(game_state.player_count == 0, 
+        "You cannot add the default tiles to a running game"
+    );
+
     foreach(y;0 .. y_dim)
     {
         foreach(x;0 .. x_dim)
         {
             if (x == 0 || y == 0 || y == (y_dim - 1) || x == (x_dim - 1))
             {
-                if (auto h = isHome(x, y))
+                if (auto h = isPlayerHome(x, y))
                 {
                     game_state.tiles[x][y] = cast(Tile)(Tile.Home + h);
                 }
@@ -194,22 +237,122 @@ string MapToString(GameState* game_state)
         {
             map_rep[i++] = game_state.tiles[x][y];
         }
-        map_rep[i++] = '\n'; 
+        map_rep[i++] = '\n';
     }
     return cast(string) map_rep;
 }
 
 import std.stdio;
 
-Position PlayerPosition(GameState* game_state, int player)
+Position PositionOf(GameState* game_state, Tile tileType)
 {
-    assert(player > 0 && player <= 8);
-    return Position.init;
+    Position position;
+
+	foreach(x, y, tile; game_state.tileForeach)
+	{
+        if (tile == tileType)
+        {
+            position.x = x;
+            position.y = y;
+        }
+	}
+
+    return position;
 }
 
-void AddPlayers(GameState* game_state, int player_count)
+bool isFree(GameState* game_state, Position p)
 {
+    return game_state.tiles[p.x][p.y] == Tile.Empty;
+}
 
+bool MoveForward(GameState* game_state, int player)
+{
+    Tile body_tile = cast(Tile)(Tile.PlayerBody1 + (player - 1));
+    Tile gun_tile = cast(Tile)(Tile.PlayerGun1 + (player - 1));
+    auto body_p = PositionOf(game_state, body_tile);
+    auto gun_p = PositionOf(game_state, gun_tile);
+    auto movement_vector = gun_p - body_p; // the movement vector is the vector from body to gun
+
+    bool result = false;
+
+    // TODO solve for movement properly! (2 step movement resolve)
+    // TODO syncroize with other players
+    if (isFree(game_state, gun_p + movement_vector))
+    {
+        result = AtomicMove(game_state, gun_p, gun_p + movement_vector);
+        if (result) AtomicMove(game_state, body_p, gun_p); 
+        // technically we could me non-atomically here (if we checked the previous atomic_move)
+    }
+    return result;
+}
+
+bool MoveBackward(GameState* game_state, int player)
+{
+    Tile body_tile = cast(Tile)(Tile.PlayerBody1 + (player - 1));
+    Tile gun_tile = cast(Tile)(Tile.PlayerGun1 + (player - 1));
+    auto body_p = PositionOf(game_state, body_tile);
+    auto gun_p = PositionOf(game_state, gun_tile);
+    auto movement_vector = body_p - gun_p; // the movement vector is the vector from gun to body
+
+    bool result = false;
+
+    // TODO solve for movement properly! (2 step movement resolve)
+    // TODO syncroize with other players
+    if (isFree(game_state, gun_p + movement_vector))
+    {
+        result = AtomicMove(game_state, body_p, body_p + movement_vector);
+        if (result) AtomicMove(game_state, gun_p, body_p);
+        // technically we could me non-atomically here (if we checked the previous atomic_move)
+    }
+
+    return result;
+}
+
+/// returns false if move fails
+bool AtomicMove(GameState* game_state, Position from, Position to)
+{
+    bool result = false;
+
+    if (isFree(game_state, to) && !isFree(game_state, from))
+    {
+        game_state.tiles[to.x][to.y] = game_state.tiles[from.x][from.y];
+        game_state.tiles[from.x][from.y] = Tile.Empty;
+
+        result = true;
+    }
+
+    return result;
+}
+
+pragma(msg,
+(() {
+    GameState game_state;
+    AddDefaultTiles(&game_state);
+    game_state.tiles[12][12] = Tile.PlayerBody1;
+    game_state.tiles[12][13] = Tile.PlayerGun1;
+    Position p;
+    assert(p.x == int.min && p.y == int.min);
+    p = PositionOf(&game_state, Tile.PlayerBody1);
+    assert(p.x == 12 && p.y == 12);
+    p = PositionOf(&game_state, Tile.PlayerGun1);
+    assert(p.x == 12 && p.y == 13);
+    auto BeforeMove = MapToString(&game_state);
+    foreach(_; 0 .. 12) MoveForward(&game_state, 1);
+    auto AfterMove = MapToString(&game_state); 
+    return  BeforeMove ~ "\n   Forward Move (p1) 12 steps: \n" ~ AfterMove;
+} ())
+);
+
+bool canMoveForward(int player)
+{
+    return false;
+}
+
+void StartGame(GameState* game_state, int player_count)
+{
+    assert(game_state.player_count == 0,
+        "You are trying to start a game which seems to be still running"
+    );
 }
 
 void main()
@@ -217,6 +360,12 @@ void main()
     GameState game_state;
 //    writeln(MapToString(&map));
     AddDefaultTiles(&game_state);
+    // TODO Select a proper map and Add the tiles to the game_state
+
+    StartGame(&game_state, 1);
+    foreach(i; 0 .. 64)
+    {
+        //RandomMove(&game_state, 1);
+    }   
     writeln(MapToString(&game_state));
 }
-
