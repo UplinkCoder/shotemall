@@ -1,5 +1,8 @@
 module shotemall.shotemall;
 
+import arsd.simpleaudio;
+import arsd.simpledisplay;
+
 enum Direction
 {
     Invalid,
@@ -355,8 +358,15 @@ void StartGame(GameState* game_state, int player_count)
     );
 }
 
+import arsd.simpleaudio;
+import arsd.simpledisplay;
+
 void main()
 {
+    AudioOutput ao = AudioOutput.init;
+    ao.fillData = (short [] audio_buf) {};
+    ao.play();
+
     GameState game_state;
 //    writeln(MapToString(&map));
     AddDefaultTiles(&game_state);

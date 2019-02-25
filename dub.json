@@ -1,0 +1,9 @@
+{
+	"name": "shotemall",
+	"authors": [
+		"Stefan Koch"
+	],
+	"description": "a game",
+	"copyright": "Copyright © 2019, Stefan Koch",
+	"license": "bsl"
+}
